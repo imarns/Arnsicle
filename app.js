@@ -1,5 +1,5 @@
 
-// Arnsicle — client-side, citation-first generator + TTS
+// Arnsicle — client-side, citation-first generator + TTS (fixed)
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
 const state = JSON.parse(localStorage.getItem('arnsicle_state') || '{"history":[]}');
@@ -16,7 +16,7 @@ if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js'); }
 
 // Utilities
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
-function setStatus(msg){ $('#status').textContent = msg; }
+function setStatus(msg){ const el = $('#status'); if(el) el.textContent = msg; }
 function mdEscape(s){ return s.replace(/[<>]/g, m=> m==='<'?'&lt;':'&gt;'); }
 function toSentenceArray(text){
   const t = text.replace(/\s+/g,' ').trim();
@@ -80,11 +80,9 @@ function composeArticle({query, years, length, wikiDocs, papers}){
     return sources.length;
   };
 
-  // Title and subtitle
   const title = `Explainer: ${query.trim().replace(/^\w/, c=>c.toUpperCase())}`;
   const subtitle = `A cited overview using Wikipedia and Crossref from the last ${years} year(s).`;
 
-  // Overview from top wiki doc sentences
   const overviewSents = [];
   for(const doc of wikiDocs){
     if(!doc.extract) continue;
@@ -94,23 +92,20 @@ function composeArticle({query, years, length, wikiDocs, papers}){
     if(overviewSents.length >= maxPerSection) break;
   }
 
-  // Key developments from paper titles
   const developments = papers.slice(0, maxPerSection).map(p=>{
     const c = citeIndex(p.url, p.title + (p.journal?` — ${p.journal}`:''));
     const yr = p.year ? ` (${p.year})` : '';
     return `• ${p.title}${yr}${p.journal?` — *${p.journal}*`:''} [${c}]`;
   });
 
-  // Timeline: try to pick sentences with years
   const timeline = [];
   for(const doc of wikiDocs){
     const c = citeIndex(doc.url, doc.title);
-    const sents = toSentenceArray(doc.extract).filter(s=> /\b(20\\d{2}|19\\d{2})\\b/.test(s));
+    const sents = toSentenceArray(doc.extract).filter(s=> /\b(20\d{2}|19\d{2})\b/.test(s));
     sents.slice(0, maxPerSection).forEach(s=> timeline.push(`${s} [${c}]`));
     if(timeline.length >= maxPerSection) break;
   }
 
-  // Outlook from leftover sentences
   const outlook = [];
   for(const doc of wikiDocs){
     const c = citeIndex(doc.url, doc.title);
@@ -120,7 +115,6 @@ function composeArticle({query, years, length, wikiDocs, papers}){
     if(outlook.length >= maxPerSection) break;
   }
 
-  // Build HTML
   const body = [];
   if(overviewSents.length){
     body.push(`<h3>Overview</h3>`);
@@ -139,28 +133,28 @@ function composeArticle({query, years, length, wikiDocs, papers}){
     outlook.forEach(s=> body.push(`<p>${mdEscape(s)}</p>`));
   }
 
-  const md = [
+  // Build Markdown safely (no invalid spread)
+  const mdParts = [
     `# ${title}`,
     ``,
     `*${subtitle}*`,
     ``,
     `## Overview`,
-    ...overviewSents.map(s=>s),
-    ``,
-    developments.length?`## Key developments (last ${years} years)`:``,
-    developments.length? ...developments : ``,
-    ``,
-    timeline.length?`## Timeline`:``,
-    ...(timeline.length? timeline: []),
-    ``,
-    outlook.length?`## Outlook`:``,
-    ...(outlook.length? outlook: []),
-    ``,
-    `## Sources`,
-    ...sources.map((s,i)=> `${i+1}. ${s.title} — ${s.url}`)
-  ].filter(Boolean).join('\\n');
+    ...overviewSents
+  ];
+  if(developments.length){
+    mdParts.push(``, `## Key developments (last ${years} years)`, ...developments);
+  }
+  if(timeline.length){
+    mdParts.push(``, `## Timeline`, ...timeline);
+  }
+  if(outlook.length){
+    mdParts.push(``, `## Outlook`, ...outlook);
+  }
+  mdParts.push(``, `## Sources`, ...sources.map((s,i)=> `${i+1}. ${s.title} — ${s.url}`));
+  const md = mdParts.join('\n');
 
-  return { title, subtitle, html: body.join('\\n'), sources, markdown: md };
+  return { title, subtitle, html: body.join('\n'), sources, markdown: md };
 }
 
 // Renderers
@@ -175,13 +169,7 @@ function renderArticle(art){
     const a=document.createElement('a'); a.href=s.url; a.target="_blank"; a.textContent = s.title;
     li.appendChild(a); ol.appendChild(li);
   });
-  // Keep in history
-  state.history.unshift({
-    ts: Date.now(),
-    title: art.title,
-    subtitle: art.subtitle,
-    markdown: art.markdown
-  });
+  state.history.unshift({ ts: Date.now(), title: art.title, subtitle: art.subtitle, markdown: art.markdown });
   state.history = state.history.slice(0, 20);
   save();
   renderHistory();
@@ -202,8 +190,8 @@ function renderHistory(){
       $('#art-body').innerHTML = md
         .replace(/^## (.*)$/gm,'<h3>$1</h3>')
         .replace(/^# (.*)$/m,'<h2>$1</h2>')
-        .replace(/\\n\\n/g,'<br><br>')
-        .replace(/^\\- (.*)$/gm,'• $1');
+        .replace(/\n\n/g,'<br><br>')
+        .replace(/^- (.*)$/gm,'• $1');
       $('#art-sources').innerHTML = ''; // not stored
     };
     const btn2=document.createElement('button'); btn2.textContent='Copy .md'; btn2.onclick=()=> navigator.clipboard.writeText(item.markdown);
@@ -227,7 +215,7 @@ function pickFemaleVoice(){
 function speak(text){
   if(!('speechSynthesis' in window)) return alert('Speech synthesis not supported in this browser.');
   speechSynthesis.cancel();
-  const chunks = text.match(/(.|[\\r\\n]){1,1500}/g) || [text];
+  const chunks = text.match(/(.|[\r\n]){1,1500}/g) || [text];
   const voice = pickFemaleVoice();
   speaking=true;
   (function queue(i){
@@ -264,9 +252,9 @@ function buildMarkdownFromDOM(){
     if(el.tagName==='H3') return `## ${el.innerText}`;
     if(el.tagName==='LI') return `- ${el.innerText}`;
     return el.innerText;
-  }).join('\\n');
-  const sources = Array.from($('#art-sources').querySelectorAll('li')).map((li,i)=> `${i+1}. ${li.innerText} — ${li.querySelector('a')?.href||''}`).join('\\n');
-  return `# ${title}\\n\\n*${subtitle}*\\n\\n${paras}\\n\\n## Sources\\n${sources}\\n`;
+  }).join('\n');
+  const sources = Array.from($('#art-sources').querySelectorAll('li')).map((li,i)=> `${i+1}. ${li.innerText} — ${li.querySelector('a')?.href||''}`).join('\n');
+  return `# ${title}\n\n*${subtitle}*\n\n${paras}\n\n## Sources\n${sources}\n`;
 }
 
 // Generate
@@ -307,7 +295,8 @@ $('#go').onclick = async ()=>{
     const art = composeArticle({query, years, length, wikiDocs, papers});
     renderArticle(art);
     setStatus('Done.');
-    window.scrollTo({top: $('#article-card').offsetTop - 8, behavior:'smooth'});
+    const card = document.getElementById('article-card');
+    if(card){ window.scrollTo({top: card.offsetTop - 8, behavior:'smooth'}); }
   }catch(e){
     console.error(e);
     setStatus('Error: '+ e.message);
@@ -331,4 +320,6 @@ $('#clear-data').onclick = ()=>{
   if(confirm('Clear local history?')){ localStorage.removeItem('arnsicle_state'); location.reload(); }
 };
 
+// Initial render
+(function(){ const h = document.getElementById('history'); if(h) { /* no-op, renderHistory called below */ } })();
 renderHistory();
