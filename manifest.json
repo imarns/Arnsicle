@@ -1,0 +1,22 @@
+{
+  "name": "Arnsicle \u2014 Fact-Checked Articles with TTS",
+  "short_name": "Arnsicle",
+  "description": "Generate concise, cited explainers from reliable open sources, with built-in text-to-speech.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#0f1115",
+  "theme_color": "#0f1115",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

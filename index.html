@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Arnsicle — Fact-Checked, Read Aloud</title>
+  <meta name="theme-color" content="#0f1115" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon-192.png" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="logo">A</div>
+    <div>
+      <h1>Arnsicle</h1>
+      <p class="tag">Fact‑checked articles with TTS</p>
+    </div>
+  </div>
+  <div class="actions">
+    <button id="install" class="ghost">Install</button>
+    <button id="theme" title="Toggle theme">☀️</button>
+  </div>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Generate an article</h2>
+    <div class="form">
+      <input id="query" placeholder='e.g. "AI breakthroughs in the last 3 years"' />
+      <div class="row">
+        <label>Years back
+          <input id="years" type="number" min="1" max="10" value="3" />
+        </label>
+        <label>Length
+          <select id="length">
+            <option value="short">Short</option>
+            <option value="medium" selected>Medium</option>
+            <option value="long">Long</option>
+          </select>
+        </label>
+        <label>
+          <input id="use-crossref" type="checkbox" checked />
+          Include Crossref (papers)
+        </label>
+      </div>
+      <div class="row">
+        <button id="go">Generate</button>
+        <button id="stop" class="ghost">Stop</button>
+      </div>
+      <p class="muted small">Sources: Wikipedia REST API and Crossref (open). All generation is extractive and cited to avoid hallucinations.</p>
+    </div>
+  </section>
+
+  <section class="card" id="status-card">
+    <h2>Status</h2>
+    <div id="status">Idle.</div>
+  </section>
+
+  <section class="card" id="article-card" hidden>
+    <div class="article-header">
+      <h2 id="art-title">—</h2>
+      <div class="article-actions">
+        <button id="tts">▶ Read</button>
+        <button id="tts-stop" class="ghost">■ Stop</button>
+        <button id="copy-md" class="ghost">Copy .md</button>
+        <button id="download-md" class="ghost">Download .md</button>
+      </div>
+    </div>
+    <p id="art-subtitle" class="muted"></p>
+    <div id="art-body"></div>
+    <h3>Sources</h3>
+    <ol id="art-sources"></ol>
+  </section>
+
+  <section class="card" id="history-card">
+    <h2>History</h2>
+    <div id="history"></div>
+    <div class="row">
+      <button id="export-data" class="ghost">Export data</button>
+      <input type="file" id="import-file" accept="application/json" />
+      <button id="import-data" class="ghost">Import</button>
+      <button id="clear-data" class="ghost">Clear</button>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div>Built for Arns. Runs offline. No accounts. No tracking.</div>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
