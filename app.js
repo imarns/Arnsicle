@@ -1,5 +1,5 @@
 
-// Arnsicle — client-side, citation-first generator + TTS (fixed)
+// Arnsicle v1.1 — extractive articles + optional LLM polish + richer TTS
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
 const state = JSON.parse(localStorage.getItem('arnsicle_state') || '{"history":[]}');
@@ -8,35 +8,42 @@ function save(){ localStorage.setItem('arnsicle_state', JSON.stringify(state)); 
 // Theme
 $('#theme').onclick = () => { document.body.classList.toggle('light'); };
 
-// PWA install
+// PWA install button behavior
 let deferred=null;
 window.addEventListener('beforeinstallprompt', (e)=>{ e.preventDefault(); deferred=e; $('#install').style.display='inline-block'; });
-$('#install').onclick = () => { if(deferred){ deferred.prompt(); deferred=null; } };
+$('#install').onclick = () => {
+  if(deferred){ deferred.prompt(); deferred=null; return; }
+  // Fallback instructions
+  const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  if(iOS) alert('On iOS: Share → Add to Home Screen');
+  else alert('Use browser menu → Install app (or Add to Home Screen).');
+};
 if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js'); }
 
 // Utilities
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
 function setStatus(msg){ const el = $('#status'); if(el) el.textContent = msg; }
 function mdEscape(s){ return s.replace(/[<>]/g, m=> m==='<'?'&lt;':'&gt;'); }
-function toSentenceArray(text){
+function sentences(text){
   const t = text.replace(/\s+/g,' ').trim();
   return t.split(/(?<=[.!?])\s+(?=[A-Z(])/).filter(Boolean);
 }
 function topSentences(text, q, max){
-  const sents = toSentenceArray(text);
+  const sents = sentences(text);
   const terms = q.toLowerCase().split(/\W+/).filter(Boolean);
   const scored = sents.map(s=>{
     const ls = s.toLowerCase();
     let score = 0;
     for(const t of terms){ if(ls.includes(t)) score += 1; }
-    score += Math.min(3, Math.round(s.length/120)); // prefer informative length
+    if(/\b(19|20)\d{2}\b/.test(s)) score += 1; // prefer dated statements
+    score += Math.min(3, Math.round(s.length/120));
     return {s, score};
   });
   scored.sort((a,b)=> b.score - a.score);
   return scored.slice(0, max).map(o=>o.s);
 }
 
-// Data fetching (CORS-friendly)
+// Fetchers
 async function wikiSearch(query, limit=5){
   const url = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=${limit}&format=json&origin=*`;
   const res = await fetch(url); if(!res.ok) throw new Error('Wikipedia search failed');
@@ -69,8 +76,8 @@ async function crossrefPapers(query, yearsBack){
   }));
 }
 
-// Article composer (extractive + citations)
-function composeArticle({query, years, length, wikiDocs, papers}){
+// Article composer
+function composeArticle({query, years, length, style, wikiDocs, papers}){
   const maxPerSection = { short: 2, medium: 4, long: 6 }[length] || 4;
   const sources = [];
   const citeIndex = (url, title) => {
@@ -80,8 +87,8 @@ function composeArticle({query, years, length, wikiDocs, papers}){
     return sources.length;
   };
 
-  const title = `Explainer: ${query.trim().replace(/^\w/, c=>c.toUpperCase())}`;
-  const subtitle = `A cited overview using Wikipedia and Crossref from the last ${years} year(s).`;
+  const title = `${styleTitle(style)}: ${query.trim().replace(/^\w/, c=>c.toUpperCase())}`;
+  const subtitle = `Cited overview (Wikipedia + Crossref) for the last ${years} year(s).`;
 
   const overviewSents = [];
   for(const doc of wikiDocs){
@@ -101,7 +108,7 @@ function composeArticle({query, years, length, wikiDocs, papers}){
   const timeline = [];
   for(const doc of wikiDocs){
     const c = citeIndex(doc.url, doc.title);
-    const sents = toSentenceArray(doc.extract).filter(s=> /\b(20\d{2}|19\d{2})\b/.test(s));
+    const sents = sentences(doc.extract).filter(s=> /\b(20\d{2}|19\d{2})\b/.test(s));
     sents.slice(0, maxPerSection).forEach(s=> timeline.push(`${s} [${c}]`));
     if(timeline.length >= maxPerSection) break;
   }
@@ -109,13 +116,16 @@ function composeArticle({query, years, length, wikiDocs, papers}){
   const outlook = [];
   for(const doc of wikiDocs){
     const c = citeIndex(doc.url, doc.title);
-    const sents = toSentenceArray(doc.extract);
+    const sents = sentences(doc.extract);
     const tail = sents.slice(-Math.max(1, Math.floor(maxPerSection/2)));
     tail.forEach(s=> outlook.push(`${s} [${c}]`));
     if(outlook.length >= maxPerSection) break;
   }
 
+  // Build styled HTML
+  const intro = styleIntro(style, query, years);
   const body = [];
+  body.push(`<p>${mdEscape(intro)}</p>`);
   if(overviewSents.length){
     body.push(`<h3>Overview</h3>`);
     overviewSents.forEach(s=> body.push(`<p>${mdEscape(s)}</p>`));
@@ -133,28 +143,64 @@ function composeArticle({query, years, length, wikiDocs, papers}){
     outlook.forEach(s=> body.push(`<p>${mdEscape(s)}</p>`));
   }
 
-  // Build Markdown safely (no invalid spread)
-  const mdParts = [
-    `# ${title}`,
-    ``,
-    `*${subtitle}*`,
-    ``,
-    `## Overview`,
-    ...overviewSents
-  ];
-  if(developments.length){
-    mdParts.push(``, `## Key developments (last ${years} years)`, ...developments);
-  }
-  if(timeline.length){
-    mdParts.push(``, `## Timeline`, ...timeline);
-  }
-  if(outlook.length){
-    mdParts.push(``, `## Outlook`, ...outlook);
-  }
-  mdParts.push(``, `## Sources`, ...sources.map((s,i)=> `${i+1}. ${s.title} — ${s.url}`));
-  const md = mdParts.join('\n');
+  const mdParts = [`# ${title}`, ``, `*${subtitle}*`, ``, intro, ``];
+  if(overviewSents.length){ mdParts.push(`## Overview`, ...overviewSents, ``); }
+  if(developments.length){ mdParts.push(`## Key developments (last ${years} years)`, ...developments, ``); }
+  if(timeline.length){ mdParts.push(`## Timeline`, ...timeline, ``); }
+  if(outlook.length){ mdParts.push(`## Outlook`, ...outlook, ``); }
+  mdParts.push(`## Sources`, ...sources.map((s,i)=> `${i+1}. ${s.title} — ${s.url}`));
+  const markdown = mdParts.join('\n');
 
-  return { title, subtitle, html: body.join('\n'), sources, markdown: md };
+  return { title, subtitle, html: body.join('\n'), sources, markdown };
+}
+
+function styleTitle(style){
+  if(style==='humour') return 'Light read';
+  if(style==='dramatic') return 'Deep dive';
+  if(style==='concise') return 'Quick brief';
+  if(style==='explanatory') return 'Explainer';
+  return 'Explainer';
+}
+function styleIntro(style, query, years){
+  const base = `You asked for ${query}, focusing on the last ${years} year(s). Here’s a grounded summary with citations.`;
+  const map = {
+    humour: base + " We keep the jokes mild and the facts tight, like a responsible stand‑up routine.",
+    dramatic: base + " This is where the trendlines sharpen and the stakes show up.",
+    concise: `TL;DR for ${query} (${years}y): highlights with citations below.`,
+    explanatory: base + " We’ll define jargon and point to sources so you can verify each claim."
+  };
+  return map[style] || base;
+}
+
+// Optional LLM polish (OpenAI‑compatible)
+async function llmPolishIfEnabled(markdown){
+  const enable = $('#llm-enable').checked;
+  const endpoint = $('#llm-endpoint').value.trim();
+  const model = $('#llm-model').value.trim();
+  const key = $('#llm-key').value.trim();
+  if(!enable || !endpoint || !model || !key) return markdown;
+
+  const sys = "You rewrite markdown to be clearer and more engaging while preserving facts and keeping bracketed citations like [1], [2] aligned to the same claims. Do not invent facts. Keep headings and list structure. Respect requested tone if present.";
+  const user = `Tone (if stated): ${$('#style').value}. Rewrite this for clarity and flow but preserve citations and claims:\n\n${markdown}`;
+
+  try{
+    const res = await fetch(endpoint, {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},
+      body: JSON.stringify({
+        model,
+        messages:[{role:'system', content:sys},{role:'user', content:user}],
+        temperature:0.4
+      })
+    });
+    if(!res.ok) throw new Error('LLM request failed');
+    const data = await res.json();
+    const text = data.choices?.[0]?.message?.content;
+    if(text && text.length>50) return text;
+  }catch(e){
+    console.warn('LLM polish skipped:', e.message);
+  }
+  return markdown;
 }
 
 // Renderers
@@ -164,13 +210,13 @@ function renderArticle(art){
   $('#art-subtitle').textContent = art.subtitle;
   $('#art-body').innerHTML = art.html;
   const ol = $('#art-sources'); ol.innerHTML='';
-  art.sources.forEach((s,i)=>{
+  art.sources.forEach((s)=>{
     const li=document.createElement('li');
     const a=document.createElement('a'); a.href=s.url; a.target="_blank"; a.textContent = s.title;
     li.appendChild(a); ol.appendChild(li);
   });
   state.history.unshift({ ts: Date.now(), title: art.title, subtitle: art.subtitle, markdown: art.markdown });
-  state.history = state.history.slice(0, 20);
+  state.history = state.history.slice(0, 30);
   save();
   renderHistory();
 }
@@ -201,28 +247,37 @@ function renderHistory(){
   });
 }
 
-// TTS
-let speaking=false;
-function pickFemaleVoice(){
-  const voices = speechSynthesis.getVoices();
-  const prefer = [/female/i,/samantha/i,/victoria/i,/karen/i,/serena/i,/zira/i,/jenny/i,/aria/i,/lisa/i,/natasha/i];
-  for(const re of prefer){
-    const v = voices.find(v=> re.test(v.name) || re.test(v.voiceURI));
-    if(v) return v;
-  }
-  return voices[0] || null;
+// TTS with voice picker
+let speaking=false, chosenVoice=null;
+function populateVoices(){
+  const sel = $('#voice'); sel.innerHTML='';
+  const voices = speechSynthesis.getVoices().filter(v=> v.lang && /^en/i.test(v.lang));
+  const preferFirst = (a)=> /female|samantha|victoria|karen|serena|zira|jenny|aria|lisa|natasha/i.test(a.name);
+  voices.sort((a,b)=> (preferFirst(b)-preferFirst(a)));
+  voices.forEach((v,i)=>{
+    const opt = document.createElement('option');
+    opt.value = v.name; opt.textContent = `${v.name} (${v.lang})`;
+    sel.appendChild(opt);
+  });
+  if(voices.length){ chosenVoice = voices[0]; sel.value = voices[0].name; }
 }
+speechSynthesis.onvoiceschanged = populateVoices; populateVoices();
+$('#voice').onchange = ()=>{
+  const name = $('#voice').value;
+  chosenVoice = speechSynthesis.getVoices().find(v=> v.name===name) || null;
+};
 function speak(text){
   if(!('speechSynthesis' in window)) return alert('Speech synthesis not supported in this browser.');
   speechSynthesis.cancel();
   const chunks = text.match(/(.|[\r\n]){1,1500}/g) || [text];
-  const voice = pickFemaleVoice();
   speaking=true;
+  const rate = parseFloat($('#rate').value||0.95);
+  const pitch = parseFloat($('#pitch').value||1.0);
   (function queue(i){
     if(i>=chunks.length || !speaking) return;
     const u = new SpeechSynthesisUtterance(chunks[i]);
-    if(voice) u.voice = voice;
-    u.rate = 0.92; u.pitch = 1; u.volume = 0.9;
+    if(chosenVoice) u.voice = chosenVoice;
+    u.rate = rate; u.pitch = pitch; u.volume = 0.95;
     u.onend = ()=> queue(i+1);
     speechSynthesis.speak(u);
   })(0);
@@ -233,7 +288,7 @@ $('#tts').onclick = ()=>{
 };
 $('#tts-stop').onclick = ()=>{ speaking=false; speechSynthesis.cancel(); };
 
-// Export
+// Export helpers
 $('#copy-md').onclick = ()=>{
   const body = buildMarkdownFromDOM();
   navigator.clipboard.writeText(body);
@@ -266,6 +321,7 @@ $('#go').onclick = async ()=>{
   const query = $('#query').value.trim();
   const years = Math.max(1, Math.min(10, parseInt($('#years').value || '3', 10)));
   const length = $('#length').value;
+  const style = $('#style').value;
   const includeCR = $('#use-crossref').checked;
   if(!query) return alert('Type a topic first.');
 
@@ -292,7 +348,22 @@ $('#go').onclick = async ()=>{
     }
 
     setStatus('Composing article…');
-    const art = composeArticle({query, years, length, wikiDocs, papers});
+    let art = composeArticle({query, years, length, style, wikiDocs, papers});
+
+    // Optional LLM stylistic polish
+    const mdPolished = await llmPolishIfEnabled(art.markdown);
+    if(mdPolished !== art.markdown){
+      // Render polished md to HTML
+      art.markdown = mdPolished;
+      const md = mdPolished;
+      const html = md
+        .replace(/^## (.*)$/gm,'<h3>$1</h3>')
+        .replace(/^# (.*)$/m,'<h2>$1</h2>')
+        .replace(/^- (.*)$/gm,'• $1')
+        .replace(/\n\n/g,'<br><br>');
+      art.html = html;
+    }
+
     renderArticle(art);
     setStatus('Done.');
     const card = document.getElementById('article-card');
@@ -303,7 +374,7 @@ $('#go').onclick = async ()=>{
   }
 };
 
-// History controls
+// History
 $('#export-data').onclick = ()=>{
   const blob = new Blob([JSON.stringify(state,null,2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
@@ -320,6 +391,4 @@ $('#clear-data').onclick = ()=>{
   if(confirm('Clear local history?')){ localStorage.removeItem('arnsicle_state'); location.reload(); }
 };
 
-// Initial render
-(function(){ const h = document.getElementById('history'); if(h) { /* no-op, renderHistory called below */ } })();
 renderHistory();
