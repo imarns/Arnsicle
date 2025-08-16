@@ -1,5 +1,5 @@
 
-// Arnsicle v1.1 — extractive articles + optional LLM polish + richer TTS
+// Arnsicle v1.1 + BGM patch — ambient background music while TTS
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
 const state = JSON.parse(localStorage.getItem('arnsicle_state') || '{"history":[]}');
@@ -13,10 +13,8 @@ let deferred=null;
 window.addEventListener('beforeinstallprompt', (e)=>{ e.preventDefault(); deferred=e; $('#install').style.display='inline-block'; });
 $('#install').onclick = () => {
   if(deferred){ deferred.prompt(); deferred=null; return; }
-  // Fallback instructions
   const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-  if(iOS) alert('On iOS: Share → Add to Home Screen');
-  else alert('Use browser menu → Install app (or Add to Home Screen).');
+  alert(iOS ? 'On iOS: Share → Add to Home Screen' : 'Use browser menu → Install app (or Add to Home Screen).');
 };
 if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js'); }
 
@@ -108,7 +106,7 @@ function composeArticle({query, years, length, style, wikiDocs, papers}){
   const timeline = [];
   for(const doc of wikiDocs){
     const c = citeIndex(doc.url, doc.title);
-    const sents = sentences(doc.extract).filter(s=> /\b(20\d{2}|19\d{2})\b/.test(s));
+    const sents = sentences(doc.extract).filter(s=> /\b(20\\d{2}|19\\d{2})\\b/.test(s));
     sents.slice(0, maxPerSection).forEach(s=> timeline.push(`${s} [${c}]`));
     if(timeline.length >= maxPerSection) break;
   }
@@ -149,9 +147,9 @@ function composeArticle({query, years, length, style, wikiDocs, papers}){
   if(timeline.length){ mdParts.push(`## Timeline`, ...timeline, ``); }
   if(outlook.length){ mdParts.push(`## Outlook`, ...outlook, ``); }
   mdParts.push(`## Sources`, ...sources.map((s,i)=> `${i+1}. ${s.title} — ${s.url}`));
-  const markdown = mdParts.join('\n');
+  const markdown = mdParts.join('\\n');
 
-  return { title, subtitle, html: body.join('\n'), sources, markdown };
+  return { title, subtitle, html: body.join('\\n'), sources, markdown };
 }
 
 function styleTitle(style){
@@ -181,7 +179,7 @@ async function llmPolishIfEnabled(markdown){
   if(!enable || !endpoint || !model || !key) return markdown;
 
   const sys = "You rewrite markdown to be clearer and more engaging while preserving facts and keeping bracketed citations like [1], [2] aligned to the same claims. Do not invent facts. Keep headings and list structure. Respect requested tone if present.";
-  const user = `Tone (if stated): ${$('#style').value}. Rewrite this for clarity and flow but preserve citations and claims:\n\n${markdown}`;
+  const user = `Tone (if stated): ${$('#style').value}. Rewrite this for clarity and flow but preserve citations and claims:\\n\\n${markdown}`;
 
   try{
     const res = await fetch(endpoint, {
@@ -236,8 +234,8 @@ function renderHistory(){
       $('#art-body').innerHTML = md
         .replace(/^## (.*)$/gm,'<h3>$1</h3>')
         .replace(/^# (.*)$/m,'<h2>$1</h2>')
-        .replace(/\n\n/g,'<br><br>')
-        .replace(/^- (.*)$/gm,'• $1');
+        .replace(/^- (.*)$/gm,'• $1')
+        .replace(/\\n\\n/g,'<br><br>');
       $('#art-sources').innerHTML = ''; // not stored
     };
     const btn2=document.createElement('button'); btn2.textContent='Copy .md'; btn2.onclick=()=> navigator.clipboard.writeText(item.markdown);
@@ -247,14 +245,94 @@ function renderHistory(){
   });
 }
 
+// ===== NEW: Background music engine (Web Audio, fully local) =====
+const BGM = (function(){
+  let ctx, master, volNode, timer;
+  function init(){
+    if(ctx) return;
+    ctx = new (window.AudioContext||window.webkitAudioContext)();
+    master = ctx.createGain(); master.gain.value = 0.8; master.connect(ctx.destination);
+    volNode = ctx.createGain(); volNode.gain.value = parseFloat($('#bgm-vol')?.value || 0.35); volNode.connect(master);
+    const vol = $('#bgm-vol'); if(vol){ vol.oninput = ()=>{ if(volNode) volNode.gain.value = parseFloat(vol.value); }; }
+  }
+  function stop(){
+    if(timer) clearInterval(timer); timer=null;
+    if(master) try{ master.disconnect(); }catch(_){}
+    if(ctx) try{ ctx.close(); }catch(_){}
+    ctx=master=volNode=null;
+  }
+  function start(kind){
+    stop(); if(kind==='none') return;
+    init();
+    if(kind==='lofi') return lofi();
+    if(kind==='ambient') return ambient();
+    if(kind==='fantasy') return fantasy();
+    if(kind==='rainchimes') return rainchimes();
+  }
+  // helpers
+  function noise(decay=220){
+    const buf = ctx.createBuffer(1, 2048, ctx.sampleRate);
+    const ch = buf.getChannelData(0);
+    for(let i=0;i<ch.length;i++){ ch[i]=(Math.random()*2-1)*Math.exp(-i/decay); }
+    const src=ctx.createBufferSource(); src.buffer=buf;
+    const g=ctx.createGain(); g.gain.value=0.04; src.connect(g).connect(volNode); src.start();
+  }
+  function tone(type,freq,len=2,attack=0.5,level=0.25){
+    const o=ctx.createOscillator(); o.type=type; o.frequency.value=freq;
+    const g=ctx.createGain(); g.gain.value=0; o.connect(g).connect(volNode); o.start();
+    const t=ctx.currentTime; g.gain.linearRampToValueAtTime(level,t+attack); g.gain.linearRampToValueAtTime(0,t+len);
+    o.stop(t+len+0.1);
+  }
+  function lofi(){
+    // very light kick/hat + pad
+    let beat=0; const tempo=72; // bpm
+    timer=setInterval(()=>{
+      if(beat%4===0 || beat%4===2){ // kickish
+        const o=ctx.createOscillator(); o.type='sine'; o.frequency.value=65;
+        const g=ctx.createGain(); g.gain.value=0.6; o.connect(g).connect(volNode);
+        const t=ctx.currentTime; g.gain.setValueAtTime(0.7,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.18); o.start(t); o.stop(t+0.2);
+      }
+      if(beat%1===0) noise(180);
+      if(beat%8===0){ [220,275,330].forEach((f,i)=> tone('triangle', f, 8, 1.4, 0.18)); }
+      beat=(beat+1)%8;
+    }, 60000/tempo/2);
+  }
+  function ambient(){
+    // evolving pads
+    let step=0;
+    timer=setInterval(()=>{
+      const base=174*Math.pow(2,(step%3)/12);
+      [base, base*1.122, base*1.498].forEach(f=> tone('sawtooth', f, 9, 2.5, 0.15));
+      step++;
+    }, 6000);
+  }
+  function fantasy(){
+    // airy choir-ish stacks
+    let step=0;
+    timer=setInterval(()=>{
+      const root=196*Math.pow(2,(step%4)/12);
+      [root, root*1.5, root*2].forEach(f=> tone('sine', f, 7, 2.8, 0.12));
+      step++;
+    }, 5000);
+  }
+  function rainchimes(){
+    // brownish rain + random chimes
+    const sp=ctx.createScriptProcessor(1024,1,1); let last=0;
+    sp.onaudioprocess = e=>{ const out=e.outputBuffer.getChannelData(0); for(let i=0;i<out.length;i++){ const w=Math.random()*2-1; last=(last+0.02*w)/1.02; out[i]=last*0.15; } };
+    sp.connect(volNode);
+    timer=setInterval(()=>{ const f=440*Math.pow(2,(Math.random()*12-6)/12); tone('triangle', f, 2, 0.3, 0.12); }, 2200);
+  }
+  return { start, stop };
+})();
+
 // TTS with voice picker
 let speaking=false, chosenVoice=null;
 function populateVoices(){
-  const sel = $('#voice'); sel.innerHTML='';
+  const sel = $('#voice'); if(!sel) return; sel.innerHTML='';
   const voices = speechSynthesis.getVoices().filter(v=> v.lang && /^en/i.test(v.lang));
   const preferFirst = (a)=> /female|samantha|victoria|karen|serena|zira|jenny|aria|lisa|natasha/i.test(a.name);
   voices.sort((a,b)=> (preferFirst(b)-preferFirst(a)));
-  voices.forEach((v,i)=>{
+  voices.forEach((v)=>{
     const opt = document.createElement('option');
     opt.value = v.name; opt.textContent = `${v.name} (${v.lang})`;
     sel.appendChild(opt);
@@ -262,19 +340,20 @@ function populateVoices(){
   if(voices.length){ chosenVoice = voices[0]; sel.value = voices[0].name; }
 }
 speechSynthesis.onvoiceschanged = populateVoices; populateVoices();
-$('#voice').onchange = ()=>{
+$('#voice')?.addEventListener('change', ()=>{
   const name = $('#voice').value;
   chosenVoice = speechSynthesis.getVoices().find(v=> v.name===name) || null;
-};
+});
+
 function speak(text){
   if(!('speechSynthesis' in window)) return alert('Speech synthesis not supported in this browser.');
   speechSynthesis.cancel();
-  const chunks = text.match(/(.|[\r\n]){1,1500}/g) || [text];
+  const chunks = text.match(/(.|[\\r\\n]){1,1500}/g) || [text];
   speaking=true;
   const rate = parseFloat($('#rate').value||0.95);
   const pitch = parseFloat($('#pitch').value||1.0);
   (function queue(i){
-    if(i>=chunks.length || !speaking) return;
+    if(i>=chunks.length || !speaking){ BGM.stop(); return; }
     const u = new SpeechSynthesisUtterance(chunks[i]);
     if(chosenVoice) u.voice = chosenVoice;
     u.rate = rate; u.pitch = pitch; u.volume = 0.95;
@@ -284,9 +363,12 @@ function speak(text){
 }
 $('#tts').onclick = ()=>{
   const body = $('#art-body').innerText;
-  speak($('#art-title').innerText + ". " + $('#art-subtitle').innerText + ". " + body);
+  const text = $('#art-title').innerText + ". " + $('#art-subtitle').innerText + ". " + body;
+  const kind = $('#bgm-style')?.value || 'none';
+  if(kind!=='none') BGM.start(kind);
+  speak(text);
 };
-$('#tts-stop').onclick = ()=>{ speaking=false; speechSynthesis.cancel(); };
+$('#tts-stop').onclick = ()=>{ speaking=false; speechSynthesis.cancel(); BGM.stop(); };
 
 // Export helpers
 $('#copy-md').onclick = ()=>{
@@ -307,9 +389,9 @@ function buildMarkdownFromDOM(){
     if(el.tagName==='H3') return `## ${el.innerText}`;
     if(el.tagName==='LI') return `- ${el.innerText}`;
     return el.innerText;
-  }).join('\n');
-  const sources = Array.from($('#art-sources').querySelectorAll('li')).map((li,i)=> `${i+1}. ${li.innerText} — ${li.querySelector('a')?.href||''}`).join('\n');
-  return `# ${title}\n\n*${subtitle}*\n\n${paras}\n\n## Sources\n${sources}\n`;
+  }).join('\\n');
+  const sources = Array.from($('#art-sources').querySelectorAll('li')).map((li,i)=> `${i+1}. ${li.innerText} — ${li.querySelector('a')?.href||''}`).join('\\n');
+  return `# ${title}\\n\\n*${subtitle}*\\n\\n${paras}\\n\\n## Sources\\n${sources}\\n`;
 }
 
 // Generate
@@ -360,7 +442,7 @@ $('#go').onclick = async ()=>{
         .replace(/^## (.*)$/gm,'<h3>$1</h3>')
         .replace(/^# (.*)$/m,'<h2>$1</h2>')
         .replace(/^- (.*)$/gm,'• $1')
-        .replace(/\n\n/g,'<br><br>');
+        .replace(/\\n\\n/g,'<br><br>');
       art.html = html;
     }
 

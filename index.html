@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -61,7 +60,7 @@
 
       <details class="card soft">
         <summary>Optional: LLM polish (bring your own key)</summary>
-        <p class="muted small">If you want a more natural rewrite, you can plug any OpenAI‑compatible endpoint (e.g., OpenRouter, Together, local proxy). Keys are kept in your browser only. This is optional; the app works fully without it.</p>
+        <p class="muted small">Plug any OpenAI‑compatible endpoint (OpenRouter, Together, local proxy). Keys stay in your browser. Entirely optional.</p>
         <div class="row">
           <label>Endpoint URL
             <input id="llm-endpoint" placeholder="https://api.openai.com/v1/chat/completions" />
@@ -74,7 +73,7 @@
           </label>
         </div>
         <label>
-          <input id="llm-enable" type="checkbox" /> Use LLM to polish (style-safe, citations preserved)
+          <input id="llm-enable" type="checkbox" /> Use LLM to polish (style-only, citations preserved)
         </label>
       </details>
 
@@ -100,6 +99,19 @@
         <select id="voice"></select>
         <label class="small">Rate <input id="rate" type="range" min="0.7" max="1.3" step="0.01" value="0.95"></label>
         <label class="small">Pitch <input id="pitch" type="range" min="0.7" max="1.3" step="0.01" value="1.0"></label>
+
+        <!-- NEW: background music controls -->
+        <label>Background
+          <select id="bgm-style">
+            <option value="none" selected>None</option>
+            <option value="lofi">Lo‑fi</option>
+            <option value="ambient">Ambient pad</option>
+            <option value="fantasy">Fantasy/choir</option>
+            <option value="rainchimes">Rain + chimes</option>
+          </select>
+        </label>
+        <label class="small">BGM vol <input id="bgm-vol" type="range" min="0" max="1" step="0.01" value="0.35"></label>
+
         <button id="copy-md" class="ghost">Copy .md</button>
         <button id="download-md" class="ghost">Download .md</button>
       </div>
